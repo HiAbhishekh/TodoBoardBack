@@ -138,17 +138,77 @@ app.post('/api/cards/:cardId/items', async (req, res) => {
   try {
     const { title } = req.body;
     const { cardId } = req.params;
-    
-    const [result] = await pool.query('INSERT INTO items (card_id, title) VALUES (?, ?)', 
-      [cardId, title]);
-    
-    const [item] = await pool.query('SELECT * FROM items WHERE id = ?', [result.insertId]);
-    res.status(201).json(item[0]);
+    const owners = ['easy', 'medium', 'hard'];
+
+    // Select a random owner
+    const randomOwner = 'medium';
+    // Insert the item with the current timestamp
+    const [result] = await pool.query(
+      'INSERT INTO items (card_id, title, created_time, owner) VALUES (?, ?, NOW(), ?)',
+      [cardId, title, randomOwner]
+    );
+
+    console.log("Insert Result:", result);  //
+    // Fetch the newly created item and format the date
+    const [item] = await pool.query(
+      'SELECT id, title, card_id, DATE_FORMAT(created_time, "%Y-%m-%dT%H:%i:%sZ") AS createdTime , owner FROM items WHERE id = ?',
+      [result.insertId]
+    );
+
+    res.status(201).json(item[0]); // Send consistent date format
   } catch (error) {
     console.error('Error creating item:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+app.get('/api/cards/:cardId/items', async (req, res) => {
+  const { cardId } = req.params;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = parseInt(req.query.offset) || 0;
+
+  try {
+    const [items] = await pool.query(
+      'SELECT id, title, card_id, DATE_FORMAT(created_time, "%Y-%m-%dT%H:%i:%sZ") AS createdTime FROM items WHERE card_id = ? LIMIT ? OFFSET ?',
+      [cardId, limit, offset]
+    );
+
+    res.status(200).json({ success: true, data: items });
+  } catch (error) {
+    console.error('Error fetching items:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Move item to a different card
+app.patch('/api/items/:itemId/move', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { targetCardId } = req.body;
+
+    if (!targetCardId) {
+      return res.status(400).json({ error: 'targetCardId is required' });
+    }
+
+    // Update the item's card_id in the database
+    await pool.query('UPDATE items SET card_id = ? WHERE id = ?', [targetCardId, itemId]);
+
+    // Fetch the updated item to return to the client
+    const [updatedItem] = await pool.query('SELECT * FROM items WHERE id = ?', [itemId]);
+    
+    // If the item doesn't exist, return 404
+    if (updatedItem.length === 0) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // Send back the updated item
+    res.json(updatedItem[0]);
+  } catch (error) {
+    console.error('Error moving item:', error);
+    res.status(500).json({ error: 'Failed to move item' });
+  }
+});
+
 
 // Delete item
 app.delete('/api/items/:id', async (req, res) => {
